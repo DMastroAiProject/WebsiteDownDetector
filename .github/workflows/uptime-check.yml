@@ -2,7 +2,10 @@ name: Site Uptime Check
 
 on:
   schedule:
-    - cron: '*/30 8-23 * * *'   # Every 30 mins, 8am–11:30pm (UTC)
+
+    - cron: '*/30 12-23 * * *'   # 8am–11:30pm EDT (noon to midnight UTC)
+    - cron: '0,30 0-3 * * *'     # continues until 11:30pm EDT (midnight–3:30am UTC)
+
   workflow_dispatch:             # Allow manual trigger from GitHub UI
 
 jobs:
