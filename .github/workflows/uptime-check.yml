@@ -1,1 +1,107 @@
-temp
+name: Site Uptime Check
+
+on:
+  schedule:
+    - cron: '*/30 8-23 * * *'   # Every 30 mins, 8am–11:30pm (UTC)
+  workflow_dispatch:             # Allow manual trigger from GitHub UI
+
+jobs:
+  check-uptime:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check site status
+        id: check
+        run: |
+          HTTP_STATUS=$(curl -o /dev/null -s -w "%{http_code}" \
+            --max-time 15 \
+            --retry 2 \
+            --retry-delay 5 \
+            https://drunkenslug.com)
+
+          echo "status=$HTTP_STATUS" >> $GITHUB_OUTPUT
+          echo "HTTP Status: $HTTP_STATUS"
+
+          if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 400 ]; then
+            echo "is_up=true" >> $GITHUB_OUTPUT
+            echo "✅ Site is UP (HTTP $HTTP_STATUS)"
+          else
+            echo "is_up=false" >> $GITHUB_OUTPUT
+            echo "❌ Site is DOWN (HTTP $HTTP_STATUS)"
+          fi
+
+      # Cache stores last known state between runs
+      - name: Restore previous state
+        id: cache
+        uses: actions/cache/restore@v4
+        with:
+          path: site-state.txt
+          key: site-state-${{ github.run_id }}
+          restore-keys: |
+            site-state-
+
+      - name: Read previous state
+        id: prev
+        run: |
+          if [ -f site-state.txt ]; then
+            PREV=$(cat site-state.txt)
+          else
+            PREV="unknown"
+          fi
+          echo "state=$PREV" >> $GITHUB_OUTPUT
+          echo "Previous state: $PREV"
+
+      # Notify on DOWN (was up, now down)
+      - name: Notify — Site went DOWN
+        if: steps.check.outputs.is_up == 'false' && steps.prev.outputs.state == 'up'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "🔴 drunkenslug.com is DOWN"
+          to: ${{ secrets.NOTIFY_EMAIL }}
+          from: Site Monitor <${{ secrets.EMAIL_USERNAME }}>
+          body: |
+            ❌ drunkenslug.com appears to be DOWN.
+
+            HTTP Status: ${{ steps.check.outputs.status }}
+            Time: ${{ github.event.repository.updated_at }}
+            Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # Notify on RECOVERY (was down, now up)
+      - name: Notify — Site is back UP
+        if: steps.check.outputs.is_up == 'true' && steps.prev.outputs.state == 'down'
+        uses: dawidd6/action-send-mail@v3
+        with:
+          server_address: smtp.gmail.com
+          server_port: 465
+          secure: true
+          username: ${{ secrets.EMAIL_USERNAME }}
+          password: ${{ secrets.EMAIL_PASSWORD }}
+          subject: "🟢 drunkenslug.com is back UP"
+          to: ${{ secrets.NOTIFY_EMAIL }}
+          from: Site Monitor <${{ secrets.EMAIL_USERNAME }}>
+          body: |
+            ✅ drunkenslug.com has recovered and is back online!
+
+            HTTP Status: ${{ steps.check.outputs.status }}
+            Time: ${{ github.event.repository.updated_at }}
+            Run: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+
+      # Save current state for next run
+      - name: Save current state
+        run: |
+          if [ "${{ steps.check.outputs.is_up }}" == "true" ]; then
+            echo "up" > site-state.txt
+          else
+            echo "down" > site-state.txt
+          fi
+
+      - name: Store state cache
+        uses: actions/cache/save@v4
+        with:
+          path: site-state.txt
+          key: site-state-${{ github.run_id }}
